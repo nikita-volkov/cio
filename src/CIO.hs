@@ -19,50 +19,89 @@ run :: Int -> CIO r -> IO r
 run numCapabilities (CIO t) = ParallelIO.withPool numCapabilities $ runReaderT t
 
 -- | Run with a pool the size of the amount of available processors.
-run' :: CIO r -> IO r
-run' cio = do
+runAuto :: CIO r -> IO r
+runAuto cio = do
   numCapabilities <- getNumCapabilities
   run numCapabilities cio
 
--- | Same as @Control.Monad.'Control.Monad.sequence_'@, but does it concurrently. 
--- Blocks the calling thread until all actions are finished.
-sequence_ :: [CIO a] -> CIO ()
-sequence_ actions = 
-  CIO $ do
-    pool <- ask
-    lift $ ParallelIO.parallel_ pool $ map (poolToCIOToIO pool) actions 
-  where
-    poolToCIOToIO pool (CIO t) = runReaderT t pool
 
--- | Same as @Control.Monad.'Control.Monad.sequence'@, but does it concurrently. 
-sequence :: [CIO a] -> CIO [a]
-sequence actions = 
-  CIO $ do
-    pool <- ask
-    lift $ ParallelIO.parallel pool $ map (poolToCIOToIO pool) actions 
-  where
-    poolToCIOToIO pool (CIO t) = runReaderT t pool
+class (Monad m) => MonadCIO m where
+  -- | Same as @Control.Monad.'Control.Monad.sequence'@, but performs concurrently. 
+  sequence :: [m a] -> m [a]
+  -- | Same as 'sequence' with a difference that it does not maintain the order of results,
+  -- which allows it to execute a bit more effeciently.
+  sequenceInterleaved :: [m a] -> m [a]
+  -- | Same as @Control.Monad.'Control.Monad.sequence_'@, but performs concurrently. 
+  -- Blocks the calling thread until all actions are finished.
+  sequence_ :: [m a] -> m ()
 
--- | Same as 'sequence' with a difference that it does not maintain the order of results,
--- which allows it to execute a bit more effeciently.
-sequenceInterleaved :: [CIO a] -> CIO [a]
-sequenceInterleaved actions = 
-  CIO $ do
-    pool <- ask
-    lift $ ParallelIO.parallelInterleaved pool $ map (poolToCIOToIO pool) actions 
-  where
-    poolToCIOToIO pool (CIO t) = runReaderT t pool
+instance MonadCIO CIO where
+  sequence actions = 
+    CIO $ do
+      pool <- ask
+      lift $ ParallelIO.parallel pool $ map (poolToCIOToIO pool) actions 
+    where
+      poolToCIOToIO pool (CIO t) = runReaderT t pool
+  sequenceInterleaved actions = 
+    CIO $ do
+      pool <- ask
+      lift $ ParallelIO.parallelInterleaved pool $ map (poolToCIOToIO pool) actions 
+    where
+      poolToCIOToIO pool (CIO t) = runReaderT t pool
+  sequence_ actions = 
+    CIO $ do
+      pool <- ask
+      lift $ ParallelIO.parallel_ pool $ map (poolToCIOToIO pool) actions 
+    where
+      poolToCIOToIO pool (CIO t) = runReaderT t pool
 
-mapM :: (a -> CIO b) -> [a] -> CIO [b]
+instance (MonadCIO m) => MonadCIO (ReaderT r m) where
+  sequence actions = do
+    env <- ask
+    let cioActions = map (flip runReaderT env) actions
+    lift $ sequence cioActions
+  sequenceInterleaved actions = do
+    env <- ask
+    let cioActions = map (flip runReaderT env) actions
+    lift $ sequenceInterleaved cioActions
+  sequence_ actions = do
+    env <- ask
+    let cioActions = map (flip runReaderT env) actions
+    lift $ sequence_ cioActions
+
+instance (MonadCIO m, Monoid w) => MonadCIO (WriterT w m) where
+  sequence actions = do
+    let cioActions = map runWriterT actions
+    WriterT $ do
+      (as, ws) <- return . unzip =<< sequence cioActions
+      return (as, mconcat ws)
+  sequenceInterleaved actions = do
+    let cioActions = map runWriterT actions
+    WriterT $ do
+      (as, ws) <- return . unzip =<< sequenceInterleaved cioActions
+      return (as, mconcat ws)
+  sequence_ actions = do
+    let cioActions = map execWriterT actions
+    WriterT $ do
+      ws <- sequenceInterleaved cioActions
+      return ((), mconcat ws)
+
+
+mapM :: (MonadCIO m) => (a -> m b) -> [a] -> m [b]
 mapM f = sequence . map f
 
-mapM_ :: (a -> CIO b) -> [a] -> CIO ()
+mapMInterleaved :: (MonadCIO m) => (a -> m b) -> [a] -> m [b]
+mapMInterleaved f = sequenceInterleaved . map f
+
+mapM_ :: (MonadCIO m) => (a -> m b) -> [a] -> m ()
 mapM_ f = sequence_ . map f
 
-forM :: [a] -> (a -> CIO b) -> CIO [b]
+forM :: (MonadCIO m) => [a] -> (a -> m b) -> m [b]
 forM = flip mapM
 
-forM_ :: [a] -> (a -> CIO b) -> CIO ()
-forM_ = flip mapM_
+forMInterleaved :: (MonadCIO m) => [a] -> (a -> m b) -> m [b]
+forMInterleaved = flip mapMInterleaved
 
+forM_ :: (MonadCIO m) => [a] -> (a -> m b) -> m ()
+forM_ = flip mapM_
 
