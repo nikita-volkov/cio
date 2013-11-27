@@ -1,4 +1,19 @@
-module CIO where
+module CIO 
+  (
+    CIO,
+    runCIO,
+    runCIO',
+    MonadCIO(..),
+    mapMConcurrently,
+    mapMConcurrently',
+    mapMConcurrently_,
+    forMConcurrently,
+    forMConcurrently',
+    forMConcurrently_,
+    distributeConcurrently,
+    distributeConcurrently_,
+  )
+  where
 
 import CIO.Prelude
 import qualified Control.Concurrent.ParallelIO.Local as ParallelIO
