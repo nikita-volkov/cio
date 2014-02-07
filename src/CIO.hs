@@ -48,7 +48,7 @@ class (Monad m) => MonadCIO m where
   sequenceConcurrently :: [m a] -> m [a]
   -- | Same as 'sequenceConcurrently' with a difference that 
   -- it does not maintain the order of results,
-  -- which allows it to execute a bit more effeciently.
+  -- which allows it to execute a bit more efficiently.
   sequenceConcurrently' :: [m a] -> m [a]
   -- | Same as @Control.Monad.'Control.Monad.sequence_'@, but performs concurrently. 
   -- Blocks the calling thread until all actions are finished.
